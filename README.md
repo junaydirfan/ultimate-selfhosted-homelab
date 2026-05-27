@@ -324,7 +324,7 @@ Access at `http://<host>:3469`
 
 ### Navidrome + Filebrowser (Music)
 
-Navidrome is a self-hosted music server (Subsonic-compatible). Filebrowser provides a web UI to manage your music files.
+Navidrome is a self-hosted music server (Subsonic-compatible). Filebrowser provides a web UI to manage your music files. I used them both 'cause I want a draggable UI where I can just drag my FLAC high-resolution audio files directly to. 
 
 📄 Compose file: [`stacks/navidrome-filebrowser/docker-compose.yml`](stacks/navidrome-filebrowser/docker-compose.yml)
 
