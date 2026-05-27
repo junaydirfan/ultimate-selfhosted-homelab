@@ -1,0 +1,25 @@
+services:
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    ports:
+      - "4533:4533"
+    restart: unless-stopped
+    environment:
+      - ND_SCANSCHEDULE=1m
+      - ND_LOGLEVEL=info
+    volumes:
+      - /media/music:/music                          # Your music library
+      - /mnt/storage/appdata/navidrome:/data         # Navidrome database
+
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    user: "0:0"
+    ports:
+      - "8088:80"
+    command: -d /config/fb.db
+    restart: unless-stopped
+    volumes:
+      - /media/music:/srv                            # Serve the music directory
+      - /mnt/storage/appdata/filebrowser:/config     # Filebrowser config & DB
