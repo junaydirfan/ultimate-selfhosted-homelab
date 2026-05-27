@@ -1,0 +1,113 @@
+version: "3.9"
+
+# ============================================================
+# PAPERLESS-NGX + AFFiNE
+# Both services share the same PostgreSQL (pgvector) instance.
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # PAPERLESS-NGX
+  # ----------------------------------------------------------
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - db
+    ports:
+      - "8222:8000"
+    environment:
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:-paperless}
+      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASS:?Set PAPERLESS_DB_PASS}
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:-admin}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASS:?Set PAPERLESS_ADMIN_PASS}
+      PAPERLESS_TIME_ZONE: America/Toronto
+    volumes:
+      - /media/paperless/data:/usr/src/paperless/data
+      - /media/paperless/media:/usr/src/paperless/media
+      - /media/paperless/consume:/usr/src/paperless/consume   # Drop PDFs here
+      - /media/paperless/export:/usr/src/paperless/export
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    container_name: redis
+    volumes:
+      - /media/paperless/redis:/data
+
+  # pgvector: backwards-compatible drop-in replacement for plain postgres
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: ${PAPERLESS_DB_USER:-paperless}
+      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASS:?Set PAPERLESS_DB_PASS}
+    volumes:
+      - /media/paperless/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PAPERLESS_DB_USER:-paperless} -d paperless"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # AFFINE (Notion-like workspace)
+  # Shares the postgres instance above (separate database).
+  # ----------------------------------------------------------
+  affine:
+    image: ghcr.io/toeverything/affine:stable
+    container_name: affine_server
+    restart: unless-stopped
+    ports:
+      - "3010:3010"
+    depends_on:
+      affine_redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      affine_migration:
+        condition: service_completed_successfully
+    volumes:
+      - affine_storage:/root/.affine/storage
+      - affine_config:/root/.affine/config
+    environment:
+      - DATABASE_URL=postgresql://${AFFINE_DB_USER:-affine}:${AFFINE_DB_PASS:?Set AFFINE_DB_PASS}@db:5432/affine
+      - REDIS_SERVER_HOST=affine_redis
+
+  affine_migration:
+    image: ghcr.io/toeverything/affine:stable
+    container_name: affine_migration
+    command: ["sh", "-c", "node ./scripts/self-host-predeploy.js"]
+    depends_on:
+      affine_redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${AFFINE_DB_USER:-affine}:${AFFINE_DB_PASS:?Set AFFINE_DB_PASS}@db:5432/affine
+      - REDIS_SERVER_HOST=affine_redis
+
+  affine_redis:
+    image: redis:alpine
+    container_name: affine_redis
+    restart: unless-stopped
+    volumes:
+      - affine_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  affine_storage:
+  affine_config:
+  affine_redis_data:
