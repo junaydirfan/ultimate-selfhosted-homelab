@@ -22,6 +22,7 @@ A complete guide to my self-hosted infrastructure running on Proxmox with Docker
 - [Hardware & OS](#hardware--os)
 - [Proxmox Setup](#proxmox-setup)
 - [LXC Containers](#lxc-containers)
+  - [How LXCs Work](#how-lxcs-work)
   - [Portainer LXC (Docker Host)](#portainer-lxc-docker-host)
   - [Services LXC (Web/ML/Dev)](#services-lxc-webmldev)
 - [Docker Stacks](#docker-stacks)
@@ -159,6 +160,31 @@ mp0: /dev/sdb,mp=/mnt/storage
 ---
 
 ## LXC Containers
+
+### How LXCs Work
+
+In Proxmox, an LXC container is lighter than a full virtual machine. A VM gets its own virtual hardware and kernel. An LXC shares the Proxmox host's Linux kernel, but still gives you an isolated userspace with its own filesystem, packages, services, IP address, and resource limits.
+
+That makes LXCs a nice middle ground for homelab services:
+
+- They boot fast and use less RAM than full VMs.
+- They are easy to back up and restore from the Proxmox UI.
+- They can get their own static IPs, bind mounts, CPU limits, and memory limits.
+- They work well for infrastructure services that do not need a totally separate kernel.
+
+There are tradeoffs. Because an LXC shares the host kernel, it is not the same isolation boundary as a VM. If you are running untrusted workloads, unusual kernel modules, or anything that needs its own kernel, use a VM instead.
+
+For this setup, I use Alpine Linux LXCs because Alpine is small, fast, and simple. It uses `apk` for packages and OpenRC for services, so commands look like `apk add nginx` and `rc-update add nginx boot`.
+
+Ubuntu LXCs are also a good choice, especially if you are newer to Linux or following guides that assume `apt` and `systemd`. Ubuntu usually has more familiar docs and fewer surprises with software that expects glibc or systemd. Alpine is leaner; Ubuntu is more familiar. Either works, but do not blindly copy Alpine commands into Ubuntu or Ubuntu commands into Alpine.
+
+For Docker inside an LXC, enable nesting. Without it, Docker may fail because it needs container features inside the container:
+
+```text
+features: keyctl=1,nesting=1
+```
+
+If Docker-in-LXC gives you constant permission or filesystem issues, move that workload into a small VM. The guide uses an Alpine LXC for the Docker host because it is lightweight and works well for this setup, but a VM is the more conservative option.
 
 ### Portainer LXC (Docker Host)
 
