@@ -4,17 +4,6 @@ A complete guide to my self-hosted infrastructure running on Proxmox with Docker
 
 ---
 
-## Design Goals
-
-- Keep admin access private by default with Tailscale instead of exposing dashboards directly to the internet.
-- Use Cloudflare Tunnel only for services that genuinely need public hostnames.
-- Store app data and media outside containers so stacks can be rebuilt without losing state.
-- Keep source-of-truth data in plain folders, then layer purpose-built apps on top for browsing, streaming, search, or automation.
-- Keep secrets in Portainer environment variables or ignored `.env` files, never committed compose files.
-- Prefer boring, easy-to-restore infrastructure over clever one-off tweaks.
-
----
-
 ## 📋 Table of Contents
 
 - [Design Goals](#design-goals)
