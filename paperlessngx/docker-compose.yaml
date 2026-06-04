@@ -1,0 +1,57 @@
+version: "3.9"
+
+# ============================================================
+# PAPERLESS-NGX
+# Standalone document management stack.
+# Notes moved to Obsidian + Self-hosted LiveSync.
+# ============================================================
+
+services:
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - db
+    ports:
+      - "8222:8000"
+    environment:
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: ${PAPERLESS_DB_USER:-paperless}
+      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASS:?Set PAPERLESS_DB_PASS}
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:-admin}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASS:?Set PAPERLESS_ADMIN_PASS}
+      PAPERLESS_TIME_ZONE: America/Toronto
+    volumes:
+      - /media/paperless/data:/usr/src/paperless/data
+      - /media/paperless/media:/usr/src/paperless/media
+      - /media/paperless/consume:/usr/src/paperless/consume   # Drop PDFs here
+      - /media/paperless/export:/usr/src/paperless/export
+
+  redis:
+    image: redis:7
+    container_name: paperless-redis
+    restart: unless-stopped
+    volumes:
+      - /media/paperless/redis:/data
+
+  db:
+    # Kept as pgvector for compatibility with the previous combined stack.
+    # For a fresh Paperless-only install, postgres:16 is also fine.
+    image: pgvector/pgvector:pg16
+    container_name: paperless-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: ${PAPERLESS_DB_USER:-paperless}
+      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASS:?Set PAPERLESS_DB_PASS}
+    volumes:
+      - /media/paperless/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PAPERLESS_DB_USER:-paperless} -d paperless"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -1,0 +1,21 @@
+version: "3.9"
+
+# ============================================================
+# OBSIDIAN SELF-HOSTED LIVESYNC - COUCHDB
+# CouchDB backend for Obsidian Self-hosted LiveSync.
+# ============================================================
+
+services:
+  couchdb:
+    image: couchdb:3
+    container_name: obsidian-livesync-couchdb
+    user: "5984:5984"
+    restart: unless-stopped
+    ports:
+      - "5984:5984"
+    environment:
+      COUCHDB_USER: ${COUCHDB_USER:?Set COUCHDB_USER}
+      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD:?Set COUCHDB_PASSWORD}
+    volumes:
+      - /mnt/storage/appdata/couchdb/data:/opt/couchdb/data
+      - /mnt/storage/appdata/couchdb/etc:/opt/couchdb/etc/local.d

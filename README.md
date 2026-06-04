@@ -18,7 +18,8 @@ A complete guide to my self-hosted infrastructure running on Proxmox with Docker
   - [Immich (Photo Management)](#immich-photo-management)
   - [Karakeep (Bookmark Manager)](#karakeep-bookmark-manager)
   - [Navidrome + Filebrowser (Music)](#navidrome--filebrowser-music)
-  - [Paperless-NGX + AFFiNE (Documents & Notes)](#paperless-ngx--affine-documents--notes)
+  - [Paperless-NGX (Documents)](#paperless-ngx-documents)
+  - [Obsidian LiveSync + CouchDB (Notes)](#obsidian-livesync--couchdb-notes)
   - [RoMM (ROM Manager)](#romm-rom-manager)
   - [Nginx Proxy Manager](#nginx-proxy-manager)
 - [Standalone Containers](#standalone-containers)
@@ -66,7 +67,8 @@ A complete guide to my self-hosted infrastructure running on Proxmox with Docker
 | `immich` | immich-server, immich-ml, postgres, redis |
 | `karakeep` | web, chrome, meilisearch |
 | `navidrome-filebrowser` | navidrome, filebrowser |
-| `paperless-ngx` | paperless, redis, postgres, affine, affine_redis |
+| `paperlessngx` | paperless, redis, postgres |
+| `obsidian-livesync-couchdb` | couchdb |
 | `romm` | romm, romm-db (mariadb) |
 | `nginx-proxy-manager` | nginx-proxy-manager |
 
@@ -420,11 +422,11 @@ This pairing is intentional: Filebrowser is the simple upload/admin surface, and
 
 ---
 
-### Paperless-NGX + AFFiNE (Documents & Notes)
+### Paperless-NGX (Documents)
 
-Combined stack for document management and collaborative note-taking, sharing one PostgreSQL instance.
+Paperless-NGX handles document intake, OCR, tagging, search, and long-term document storage. I split it out from AFFiNE so documents and notes are no longer coupled to the same database stack.
 
-📄 Compose file: [`paperlessngx-AFFiNE/docker-compose.yaml`](paperlessngx-AFFiNE/docker-compose.yaml)
+📄 Compose file: [`paperlessngx/docker-compose.yaml`](paperlessngx/docker-compose.yaml)
 
 **Volume mounts to update:**
 
@@ -438,16 +440,60 @@ Combined stack for document management and collaborative note-taking, sharing on
 **Services:**
 - `paperless` — Document management with OCR (port 8222)
 - `redis` — Task queue for Paperless
-- `db` (pgvector/postgres) — Shared database for Paperless + AFFiNE
-- `affine` — Notion-like collaborative workspace (port 3010)
-- `affine_migration` — One-shot DB schema migration
-- `affine_redis` — Dedicated Redis for AFFiNE
+- `db` (postgres) — Paperless database
 
 > **Credentials:** The default admin credentials in the compose file are for initial setup only. Change `PAPERLESS_ADMIN_PASSWORD` immediately after first login.
 
-> **Database note:** If AFFiNE uses its own `AFFINE_DB_USER`, `AFFINE_DB_PASS`, and `affine` database on the shared Postgres container, create that database/user before starting the AFFiNE service or add an init script. Sharing the Postgres instance is fine; sharing the same application database is not recommended.
+Access Paperless at `http://<host>:8222`
 
-Access Paperless at `http://<host>:8222` | AFFiNE at `http://<host>:3010`
+---
+
+### Obsidian LiveSync + CouchDB (Notes)
+
+AFFiNE has been replaced with Obsidian for notes. Obsidian keeps the actual notes as local Markdown files, while Self-hosted LiveSync uses CouchDB as the sync backend across devices. This fits the same philosophy as the rest of the homelab: keep the important data portable, then layer self-hosted services on top.
+
+📄 Compose file: [`obsidian-livesync-couchdb/docker-compose.yaml`](obsidian-livesync-couchdb/docker-compose.yaml)
+
+**Environment variables needed:**
+
+```env
+COUCHDB_USER=<your-couchdb-admin-user>
+COUCHDB_PASSWORD=<your-secure-couchdb-password>
+```
+
+**Volume mounts to update before deploying:**
+
+| Path | Description |
+|------|-------------|
+| `/mnt/storage/appdata/couchdb/data` | CouchDB database files |
+| `/mnt/storage/appdata/couchdb/etc` | CouchDB local configuration |
+
+**Services:**
+- `couchdb` — Sync backend for Obsidian Self-hosted LiveSync (port 5984)
+
+Before first boot, create the host folders and give CouchDB ownership:
+
+```bash
+mkdir -p /mnt/storage/appdata/couchdb/data /mnt/storage/appdata/couchdb/etc
+chown -R 5984:5984 /mnt/storage/appdata/couchdb
+```
+
+After deploying, initialize CouchDB for Self-hosted LiveSync using the official init script:
+
+```bash
+curl -s https://raw.githubusercontent.com/vrtmrz/obsidian-livesync/main/utils/couchdb/couchdb-init.sh \
+  | hostname=http://<host>:5984 username=<COUCHDB_USER> password=<COUCHDB_PASSWORD> bash
+```
+
+Then install these Obsidian plugins:
+
+- Self-hosted LiveSync — Syncs the vault through CouchDB
+- Excalidraw — Drawings and visual notes inside Obsidian
+- Any other community plugins you use for your workflow
+
+In Obsidian, configure Self-hosted LiveSync with the CouchDB endpoint, database name, username, password, and an end-to-end encryption passphrase. Use the plugin setup wizard or setup URI flow when adding more devices.
+
+Keep CouchDB private behind Tailscale or a trusted reverse proxy with HTTPS. Do not expose it directly to the public internet without auth, TLS, and careful access controls.
 
 ---
 
@@ -704,19 +750,23 @@ Back up bind mounts and named volumes, especially:
 - `/media/music`
 - `/media/save`
 - `/mnt/storage/appdata`
+- `/mnt/storage/appdata/couchdb`
 - Portainer data
 - Pi-hole `/etc/pihole`
 - Nginx Proxy Manager `/data` and `/etc/letsencrypt`
+- Obsidian vaults on each client device
 
 Database-backed apps should also get logical dumps:
 
 ```bash
 # PostgreSQL example
-docker exec -t postgres pg_dumpall -U paperless > postgres-backup.sql
+docker exec -t paperless-postgres pg_dump -U paperless paperless > paperless-postgres-backup.sql
 
 # MariaDB example
 docker exec -t romm-db mariadb-dump -u root -p romm > romm-backup.sql
 ```
+
+For CouchDB, prefer replication to another CouchDB target or stop the container before taking a filesystem-level backup of `/mnt/storage/appdata/couchdb`.
 
 ### Updates
 
@@ -728,7 +778,7 @@ docker compose up -d
 docker image prune
 ```
 
-For critical services like Immich, Paperless, AFFiNE, and RoMM, read release notes before major upgrades. Databases deserve extra caution: take a backup before changing image tags or versions.
+For critical services like Immich, Paperless, CouchDB/Obsidian LiveSync, and RoMM, read release notes before major upgrades. Databases deserve extra caution: take a backup before changing image tags or versions.
 
 ---
 
@@ -737,6 +787,7 @@ For critical services like Immich, Paperless, AFFiNE, and RoMM, read release not
 - Do not expose Proxmox, Portainer, Pi-hole, Home Assistant, or database ports directly to the internet.
 - Use Tailscale for admin access and Cloudflare Tunnel only for services meant to be reachable by a public hostname.
 - Treat Filebrowser like an admin surface because it can upload, rename, and delete files in mounted folders.
+- Treat CouchDB like a database, not a public notes app. Keep it behind Tailscale or a locked-down HTTPS reverse proxy.
 - Change default credentials immediately after first login.
 - Enable 2FA/MFA wherever the app supports it.
 - Use strong unique passwords and store them in Vaultwarden or another password manager.
@@ -786,6 +837,14 @@ For bind mounts like `/media/music` or `/media/paperless`, make sure the contain
 - Check metadata with a tag editor if albums appear under the wrong artist or as unknown.
 - Check logs with `docker logs navidrome` for permission errors or unsupported file formats.
 
+### Obsidian LiveSync Cannot Reach CouchDB
+
+- Confirm CouchDB is reachable at `http://<host>:5984/_utils`.
+- Confirm the official Self-hosted LiveSync CouchDB init script completed successfully.
+- Confirm the Obsidian plugin is using the same database name, username, password, and endpoint.
+- If syncing mobile devices, use HTTPS through Tailscale, Cloudflare Tunnel, or a reverse proxy with a valid certificate.
+- Check CouchDB logs with `docker logs obsidian-livesync-couchdb` for auth, CORS, or permission errors.
+
 ---
 
 ## Storage Layout
@@ -808,6 +867,9 @@ For bind mounts like `/media/music` or `/media/paperless`, make sure the contain
         └── appdata/
             ├── navidrome/
             ├── filebrowser/
+            ├── couchdb/
+            │   ├── data/          # Obsidian LiveSync CouchDB data
+            │   └── etc/           # CouchDB local config
             └── ...         # Per-service config directories
 ```
 
