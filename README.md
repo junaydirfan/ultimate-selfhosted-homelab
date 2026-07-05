@@ -26,9 +26,9 @@ A complete guide to my self-hosted infrastructure running on Proxmox with Docker
 - [Networking](#networking)
   - [Internal Access](#internal-access)
   - [External Access via Cloudflare Tunnel](#external-access-via-cloudflare-tunnel)
-  - [Tailscale (VPN Access)](#tailscale-vpn-access)
+  - [NetBird (VPN Access)](#netbird-vpn-access)
   - [Pi-hole (DNS)](#pi-hole-dns)
-  - [Pi-hole + Tailscale (Ad Blocking Anywhere)](#pi-hole--tailscale-ad-blocking-anywhere)
+  - [Pi-hole + NetBird (Ad Blocking Anywhere)](#pi-hole--netbird-ad-blocking-anywhere)
 - [Backups & Maintenance](#backups--maintenance)
 - [Security Checklist](#security-checklist)
 - [Troubleshooting](#troubleshooting)
@@ -72,7 +72,7 @@ A complete guide to my self-hosted infrastructure running on Proxmox with Docker
 | `romm` | romm, romm-db (mariadb) |
 | `nginx-proxy-manager` | nginx-proxy-manager |
 
-**Standalone containers:** pihole, homeassistant, homepage, glance, grocy, vaultwarden, tailscale, cloudflared, portainer
+**Standalone containers:** pihole, homeassistant, homepage, glance, grocy, vaultwarden, netbird, cloudflared, portainer
 
 ---
 
@@ -415,7 +415,7 @@ This pairing is intentional: Filebrowser is the simple upload/admin surface, and
 
 **Notes:**
 
-- Keep Filebrowser private behind Tailscale or your LAN if possible. It has write access to the music library.
+- Keep Filebrowser private behind NetBird or your LAN if possible. It has write access to the music library.
 - Use Navidrome for playback, playlists, users, and remote listening; use Filebrowser for uploads, folder cleanup, and quick file operations.
 - Tag high-res files before or after upload with a tool like MusicBrainz Picard or beets. Navidrome relies heavily on embedded metadata, not just folder names.
 - If you expose only one service remotely, expose Navidrome. Filebrowser is more of an admin tool.
@@ -493,7 +493,7 @@ Then install these Obsidian plugins:
 
 In Obsidian, configure Self-hosted LiveSync with the CouchDB endpoint, database name, username, password, and an end-to-end encryption passphrase. Use the plugin setup wizard or setup URI flow when adding more devices.
 
-Keep CouchDB private behind Tailscale or a trusted reverse proxy with HTTPS. Do not expose it directly to the public internet without auth, TLS, and careful access controls.
+Keep CouchDB private behind NetBird or a trusted reverse proxy with HTTPS. Do not expose it directly to the public internet without auth, TLS, and careful access controls.
 
 ---
 
@@ -570,7 +570,7 @@ These run directly via `docker run` or simple single-service compose files, mana
 | `glance` | `glanceapp/glance` | 8080 | Self-hosted feed dashboard |
 | `grocy` | `linuxserver/grocy` | 9283 | Grocery & household management |
 | `vaultwarden` | `vaultwarden/server` | 8080 | Bitwarden-compatible password manager |
-| `tailscale` | `tailscale/tailscale` | — | Zero-config VPN mesh |
+| `netbird` | `netbirdio/netbird` | — | Open-source Zero-trust VPN mesh |
 | `cloudflared` | `cloudflare/cloudflared` | — | Cloudflare Tunnel (expose services securely) |
 
 ---
@@ -606,42 +606,54 @@ docker run --rm cloudflare/cloudflared:latest tunnel create home-server
 
 Then configure routes in the Cloudflare Zero Trust dashboard, pointing each hostname to your internal service (e.g. `paperless.yourdomain.com` → `http://192.168.1.20:8222`).
 
-### Tailscale (VPN Access)
+### NetBird (VPN Access)
 
-Tailscale provides secure remote access to your server from anywhere without exposing admin ports publicly. For this layout, the cleanest setup is to run Tailscale inside the Portainer LXC or another small "network services" LXC, then access published Docker ports over the Tailscale IP.
+[NetBird](https://github.com/netbirdio/netbird) is an open-source overlay network tool that establishes secure peer-to-peer connections between machines using WireGuard, without complex firewall configuration.
 
-Install Tailscale on the LXC and prevent the DNS server itself from accepting tailnet DNS settings:
+#### Benefits of NetBird:
+- **100% Open Source:** NetBird is fully open-source (under BSD 3-Clause license) and can be entirely self-hosted (dashboard, management server, signal server, and turn relay).
+- **Zero-Trust Network:** Control who can access what using central Access Control Policies (ACLs).
+- **Mullvad VPN Support (Coexistence):** While NetBird does not have a one-click paid Mullvad integration like Tailscale, its open-source routing engine allows it to easily coexist with privacy VPNs like Mullvad. You can route specific public internet traffic through Mullvad exit nodes using community scripts (e.g., [netbird-mullvad-bypass](https://github.com/mischw/netbird-mullvad-bypass)) or custom routing rules, retaining access to private NetBird nodes while anonymizing external traffic.
+- **Identity Provider (IdP) Integration:** Connect with Okta, Keycloak, Google Workspace, Azure AD, etc., for single sign-on (SSO).
+- **Centralized Subnet Routing:** Easily share subnets or entire LAN networks using specific routing peers with built-in route health checks.
+
+For this layout, the cleanest setup is to run NetBird inside the Portainer LXC or another small "network services" LXC, then access published Docker ports over the NetBird IP.
+
+#### Installing NetBird on the LXC
+Install the NetBird client directly on the Proxmox LXC and connect it to your network:
 
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up --accept-dns=false
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+netbird up --setup-key <YOUR_SETUP_KEY>
 ```
 
-In the Tailscale admin console, consider disabling key expiry for trusted always-on server nodes so remote access does not randomly break. Only do this for devices you physically control.
-
-If you prefer the Docker image, persist Tailscale state so restarts do not create a new machine every time:
+#### Docker Client Setup
+If you prefer running the NetBird client inside a Docker container, use the following stack definition. Ensure you persist the client state directory so restarts do not register duplicate peers in your NetBird dashboard:
 
 ```yaml
 services:
-  tailscale:
-    image: tailscale/tailscale:latest
-    container_name: tailscale
+  netbird:
+    image: netbirdio/netbird:latest
+    container_name: netbird
     hostname: homeserver
     restart: unless-stopped
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY:?Set TS_AUTHKEY}
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_ACCEPT_DNS=false
-    volumes:
-      - tailscale_state:/var/lib/tailscale
-    devices:
-      - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
-      - NET_RAW
+      - SYS_ADMIN
+      - SYS_RESOURCE
+    environment:
+      - NB_SETUP_KEY=${NB_SETUP_KEY:?Set NB_SETUP_KEY}
+    volumes:
+      - netbird_state:/var/lib/netbird
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    network_mode: host
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv6.conf.all.forwarding=1
 
 volumes:
-  tailscale_state:
+  netbird_state:
 ```
 
 ### Pi-hole (DNS)
@@ -675,34 +687,32 @@ volumes:
 
 Access the admin UI at `http://<host>:8081/admin`.
 
-### Pi-hole + Tailscale (Ad Blocking Anywhere)
+### Pi-hole + NetBird (Ad Blocking Anywhere)
 
-Pi-hole handles DNS filtering. Tailscale makes that DNS server reachable from your phone, laptop, or tablet even when you are away from home. Together they act like a universal ad blocker for any device connected to your tailnet.
+Pi-hole handles DNS filtering. NetBird makes that DNS server reachable from your phone, laptop, or tablet even when you are away from home. Together they act like a universal ad blocker for any device connected to your NetBird network.
 
 Recommended setup:
 
 1. Run Pi-hole on the Docker/LXC host and publish port `53` on the host.
-2. Run Tailscale on that same host/LXC with `--accept-dns=false`.
-3. Find the host's Tailscale IP:
+2. Run NetBird client on that same host/LXC.
+3. Find the host's NetBird IP by checking the client status:
 
 ```bash
-tailscale ip -4
+netbird status --detail
 ```
 
-4. In the Tailscale admin console, go to **DNS**.
-5. Add a **Custom nameserver** using the Pi-hole host's Tailscale IP, for example `100.x.y.z`.
-6. Enable **Override DNS servers** so tailnet devices use Pi-hole instead of whatever DNS the current Wi-Fi or mobile network provides.
-7. Keep MagicDNS enabled so tailnet device names still resolve.
-
-If you use a Tailscale exit node, edit the Pi-hole nameserver in the DNS page and enable **Use with exit node**.
+4. In the NetBird admin console, go to **DNS** -> **Nameservers** -> **Add Nameserver**.
+5. Choose **Custom DNS**, enter a name (e.g., `Pi-hole`), and enter the host's NetBird IP (e.g., `10.x.y.z`).
+6. Leave the **Match Domains** field empty (so it resolves all domains through Pi-hole) and assign the configuration to the relevant peer group (e.g., `All`).
+7. Save the nameserver.
 
 Test from a remote device:
 
 ```bash
-nslookup doubleclick.net 100.x.y.z
+nslookup doubleclick.net 10.x.y.z
 ```
 
-Then open Pi-hole's query log. You should see the remote tailnet device making DNS requests.
+Then open Pi-hole's query log. You should see the remote NetBird device making DNS requests.
 
 **Recommended blocklists:**
 
@@ -785,9 +795,9 @@ For critical services like Immich, Paperless, CouchDB/Obsidian LiveSync, and RoM
 ## Security Checklist
 
 - Do not expose Proxmox, Portainer, Pi-hole, Home Assistant, or database ports directly to the internet.
-- Use Tailscale for admin access and Cloudflare Tunnel only for services meant to be reachable by a public hostname.
+- Use NetBird for admin access and Cloudflare Tunnel only for services meant to be reachable by a public hostname.
 - Treat Filebrowser like an admin surface because it can upload, rename, and delete files in mounted folders.
-- Treat CouchDB like a database, not a public notes app. Keep it behind Tailscale or a locked-down HTTPS reverse proxy.
+- Treat CouchDB like a database, not a public notes app. Keep it behind NetBird or a locked-down HTTPS reverse proxy.
 - Change default credentials immediately after first login.
 - Enable 2FA/MFA wherever the app supports it.
 - Use strong unique passwords and store them in Vaultwarden or another password manager.
@@ -810,12 +820,12 @@ features: keyctl=1,nesting=1
 
 Restart the container after changing this.
 
-### Tailscale Works but Pi-hole Does Not Block Remotely
+### NetBird Works but Pi-hole Does Not Block Remotely
 
-- Confirm the remote device is connected to Tailscale.
-- Confirm Tailscale DNS has Pi-hole set as a custom nameserver.
-- Confirm **Override DNS servers** is enabled.
-- Confirm the nameserver IP is the Tailscale IP of the host running Pi-hole.
+- Confirm the remote device is connected to NetBird.
+- Confirm NetBird DNS nameserver settings have Pi-hole set as a custom nameserver.
+- Confirm the custom nameserver is active and assigned to the correct peer group.
+- Confirm the nameserver IP is the NetBird IP of the host running Pi-hole.
 - Check Pi-hole query log while loading a site from the remote device.
 
 ### A Service Cannot Reach Its Database
@@ -842,7 +852,7 @@ For bind mounts like `/media/music` or `/media/paperless`, make sure the contain
 - Confirm CouchDB is reachable at `http://<host>:5984/_utils`.
 - Confirm the official Self-hosted LiveSync CouchDB init script completed successfully.
 - Confirm the Obsidian plugin is using the same database name, username, password, and endpoint.
-- If syncing mobile devices, use HTTPS through Tailscale, Cloudflare Tunnel, or a reverse proxy with a valid certificate.
+- If syncing mobile devices, use HTTPS through NetBird, Cloudflare Tunnel, or a reverse proxy with a valid certificate.
 - Check CouchDB logs with `docker logs obsidian-livesync-couchdb` for auth, CORS, or permission errors.
 
 ---
